@@ -66,7 +66,7 @@ def start_color_recognition():
 
 # -------------------------------------------------------------
 #  指定した色番号の X / 幅(W) を読み取る（生の値）
-#    未検出のとき X は負の値（< 0）を返す
+#    未検出のとき X は 0 または負の値を返す（=オブジェクト無し）
 # -------------------------------------------------------------
 def color_x(color_index):
     return mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_X, 1)
@@ -77,8 +77,8 @@ def color_w(color_index):
 
 
 def is_detected(x, w):
-    # X が負 = 未検出。幅が小さすぎる検出はノイズ/誤検出として無視
-    return x >= 0 and w >= MIN_WIDTH
+    # X が 0 以下 = 未検出。さらに幅が小さすぎる検出はノイズ/誤検出として無視
+    return x > 0 and w >= MIN_WIDTH
 
 
 # -------------------------------------------------------------
