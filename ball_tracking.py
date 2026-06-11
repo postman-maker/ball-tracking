@@ -51,23 +51,25 @@ def clamp(value, low, high):
 # -------------------------------------------------------------
 def read_ball(name):
     """
-    指定した名前の色ボールを1つ読み取る。
+    指定した名前(学習ラベル)のボールを1つ読み取る。
     戻り値: (x, y, w, h)  / 見つからなければ None
 
     --- 実機との対応 -------------------------------------------
-    確認済み: mbuild.ai_camera.get_object_x('名前', 1) は物体認識用。
-    色認識の場合は同じ命名規則の get_color_* を使う想定です。
-    mBlock で「色認識」の “Xを取得” ブロックを1つ置き、生成された
-    関数名がこれと違う場合は、下の4行をその名前に置き換えてください。
-    （番号 1 = 一番大きい＝一番近い検出）
+    確認済み: mbuild.ai_camera.get_object_x('名前', 1) が動作する。
+    AI Camera 2.0 は学習ラベル名(物体名でも色名でも)を get_object_*
+    で読む統一APIと想定し、色を "red"/"blue" の名前で学習して使う。
+    （番号 1 = 一番大きい＝一番近い検出 / 未検出は -99999）
+
+    ※ もし get_object_w / _h でエラーになる場合は、その2つだけ
+       実機の「幅/高さを取得」ブロックが生成する関数名に直すこと。
     ------------------------------------------------------------
     """
-    x = mbuild.ai_camera.get_color_x(name, 1)
+    x = mbuild.ai_camera.get_object_x(name, 1)
     if x == NOT_FOUND:
         return None
-    y = mbuild.ai_camera.get_color_y(name, 1)
-    w = mbuild.ai_camera.get_color_w(name, 1)
-    h = mbuild.ai_camera.get_color_h(name, 1)
+    y = mbuild.ai_camera.get_object_y(name, 1)
+    w = mbuild.ai_camera.get_object_w(name, 1)
+    h = mbuild.ai_camera.get_object_h(name, 1)
     return (x, y, w, h)
 
 

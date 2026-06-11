@@ -39,16 +39,16 @@ Makeblock の **CyberPi** と **AI Camera 2.0** を使った、色付きボー�
 
 ### ⚠ カメラ取得関数の確認（1か所だけ）
 
-確認済みの API は `mbuild.ai_camera.get_object_x('名前', 1)` 形式で、**未検出のとき `-99999`** を返します（番号 1 = 一番大きい＝一番近い検出）。色認識では同じ命名規則の `get_color_*` を使う想定で `read_ball()` を書いています。
+確認済みの API は `mbuild.ai_camera.get_object_x('名前', 1)` で、**未検出のとき `-99999`** を返します（番号 1 = 一番大きい＝一番近い検出）。AI Camera 2.0 は**学習ラベル名（物体名でも色名でも）を `get_object_*` で読む統一API**と考えられるため、色を `red` / `blue` の名前で学習し、`get_object_*` で読みます。
 
 | 取得したい値 | コード内の呼び出し |
 | --- | --- |
-| X 座標 | `mbuild.ai_camera.get_color_x(name, 1)` |
-| Y 座標 | `mbuild.ai_camera.get_color_y(name, 1)` |
-| 幅 W | `mbuild.ai_camera.get_color_w(name, 1)` |
-| 高さ H | `mbuild.ai_camera.get_color_h(name, 1)` |
+| X 座標 | `mbuild.ai_camera.get_object_x(name, 1)` |
+| Y 座標 | `mbuild.ai_camera.get_object_y(name, 1)` |
+| 幅 W | `mbuild.ai_camera.get_object_w(name, 1)` |
+| 高さ H | `mbuild.ai_camera.get_object_h(name, 1)` |
 
-**確認方法**：mBlock の Python エディタで「色認識」の “X を取得” ブロックを1つドラッグし、生成された関数名を見てください。`get_color_x` と違う名前なら、`ball_tracking.py` の `read_ball()` 内の4行をその名前に置き換えてください（ここ以外は変更不要）。
+**もし `get_object_w` / `get_object_h` でエラーが出たら**、その2つだけ実機の「幅／高さを取得」ブロックが生成する関数名に置き換えてください（X 座標 `get_object_x` は確認済み）。
 
 ---
 
