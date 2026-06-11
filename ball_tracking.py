@@ -125,7 +125,17 @@ def stop():
 # -------------------------------------------------------------
 @event.start
 def on_start():
+    # プログラムが起動したことを最初に表示（カメラ初期化より前）
+    cyberpi.display.show_label("Start", 24, "center", index=0)
+    cyberpi.led.on(0, 255, 0)
+    time.sleep(1)
+
+    # カメラを色認識モードにする（待機中も分かるように表示）
+    # ここで止まったままなら、カメラが応答していない（接続/電源を確認）
+    cyberpi.display.show_label("Camera init...", 16, "center", index=0)
     start_color_recognition()
+    cyberpi.display.show_label("Camera OK", 16, "center", index=0)
+    time.sleep(1)
 
     # 物体を見つけるまでは停止して待機
     stop()
