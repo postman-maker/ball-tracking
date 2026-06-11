@@ -27,17 +27,28 @@ Makeblock の **CyberPi** と **AI Camera 2.0** を使った、色付きボー�
 3. `ball_tracking.py` の内容を貼り付け
 4. **アップロードモード**で CyberPi に書き込み
 
-### ⚠ AI Camera 2.0 の関数名について
+### 事前準備（AI Camera 2.0 側で色を学習）
 
-AI Camera 2.0 を Python から呼ぶ関数名は、mBlock に追加した **「AI Camera 2.0」拡張が生成するコード**に合わせて読み替えてください。`ball_tracking.py` の `get_ball()` 内にあるブロック対応表を参照してください。
+このプログラムは AI Camera 2.0 の **色認識** を使います。先に実機側で色を2つ学習させてください。
 
-| mBlock のブロック | コード内の呼び出し（要置き換え） |
+1. AI Camera 2.0 を **色認識(Blob)モード**にする
+2. 赤ボールを学習させ、名前を **`red`** にする
+3. 青ボールを学習させ、名前を **`blue`** にする
+
+学習名は `ball_tracking.py` の `RED_NAME` / `BLUE_NAME` と**必ず一致**させてください。
+
+### ⚠ カメラ取得関数の確認（1か所だけ）
+
+確認済みの API は `mbuild.ai_camera.get_object_x('名前', 1)` 形式で、**未検出のとき `-99999`** を返します（番号 1 = 一番大きい＝一番近い検出）。色認識では同じ命名規則の `get_color_*` を使う想定で `read_ball()` を書いています。
+
+| 取得したい値 | コード内の呼び出し |
 | --- | --- |
-| 色認識(Blob)を開始する | `ai_camera.start_blob_recognition()` |
-| 検出した数 | `ai_camera.get_blob_count()` |
-| i 番目の色 | `ai_camera.get_blob_color(i)` |
-| i 番目の X / Y | `ai_camera.get_blob_x(i)` / `get_blob_y(i)` |
-| i 番目の 幅 W / 高さ H | `ai_camera.get_blob_w(i)` / `get_blob_h(i)` |
+| X 座標 | `mbuild.ai_camera.get_color_x(name, 1)` |
+| Y 座標 | `mbuild.ai_camera.get_color_y(name, 1)` |
+| 幅 W | `mbuild.ai_camera.get_color_w(name, 1)` |
+| 高さ H | `mbuild.ai_camera.get_color_h(name, 1)` |
+
+**確認方法**：mBlock の Python エディタで「色認識」の “X を取得” ブロックを1つドラッグし、生成された関数名を見てください。`get_color_x` と違う名前なら、`ball_tracking.py` の `read_ball()` 内の4行をその名前に置き換えてください（ここ以外は変更不要）。
 
 ---
 
