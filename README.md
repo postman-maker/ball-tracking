@@ -57,7 +57,8 @@ Makeblock の **CyberPi** と **AI Camera 2.0** を使った、色付きボー�
 
 ```
 [起動時]
-└─ 色認識モードになるまで待つ（start_color_recognition）
+├─ 色認識モードになるまで待つ（start_color_recognition）
+└─ ボールを見つけるまでは停止して待機
 
 [ずっと繰り返し]
 ├─ 赤(色番号1)を読む
@@ -85,11 +86,13 @@ Makeblock の **CyberPi** と **AI Camera 2.0** を使った、色付きボー�
 | `RED_INDEX` / `BLUE_INDEX` | 学習した色の番号 | 学習した順番に合わせる |
 | `TARGET_WIDTH` | 約10cmのときの幅(px) | 赤ボールを**実際に10cm前**に置き、そのときの幅を測って設定（初期値180） |
 | `WIDTH_TOLERANCE` | 距離OKとみなす幅の幅 | 大きくすると前後の揺れ（ハンチング）が減る |
-| `CENTER_X` | 画面中心X | 通常 320（画面幅640） |
-| `DRIVE_DIV` | 距離→前後速度の係数 | 小さいほど機敏（行き過ぎるなら大きく） |
-| `TURN_K` / `TURN_DIV` | 左右ズレ→旋回 | 追従の曲がりが鈍ければ `TURN_K` を大きく |
+| `FRAME_CENTER_X` | 画面中心X | 通常 320（画面幅640） |
+| `X_TOLERANCE` | 中央とみなす左右の許容差 | 大きくすると中央付近のふらつきが減る |
+| `KP_DRIVE` | 距離ずれ→前後速度の係数 | 小さくすると穏やか（行き過ぎるなら小さく） |
+| `KP_TURN` | 左右ずれ→旋回の係数 | 追従の曲がりが鈍ければ大きく、ふらつけば小さく |
 | `MAX_SPEED` | 前後速度の上限 | 速すぎて乱れるなら下げる |
 | `SPIN_SPEED` | 青のとき背を向ける旋回速度 | — |
+| `LOOP_INTERVAL` | 制御周期（秒） | 反応を速くしたいなら小さく |
 
 ### 距離10cmの考え方
 
@@ -99,7 +102,7 @@ AI Camera 2.0 は距離を cm で直接は返さないため、**ボールの見
 
 ## 調整のコツ
 
-- ボールがふらついて止まらない → `WIDTH_TOLERANCE` を大きく、`DRIVE_DIV` を大きく
-- 反応が鈍い → `TURN_K` を大きく、`DRIVE_DIV` を小さく
+- ボールがふらついて止まらない → `WIDTH_TOLERANCE` / `X_TOLERANCE` を大きく、`KP_DRIVE` を小さく
+- 反応が鈍い → `KP_TURN` / `KP_DRIVE` を大きく、`LOOP_INTERVAL` を小さく
 - 色の認識精度が低い → AI Camera 2.0 側で赤・青を**明るい環境で**学習し直す
 - 赤と青の反応が逆 → `RED_INDEX` と `BLUE_INDEX` を入れ替える
