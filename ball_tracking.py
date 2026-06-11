@@ -42,6 +42,11 @@ MAX_SPEED = 80           # 前進速度の上限
 SPIN_SPEED = 30          # 青のとき背を向ける旋回スピード
 LOOP_INTERVAL = 0.05     # 制御周期（秒）
 
+# 赤を追従中に見失ったときの探索（首振り）パラメータ
+SEARCH_DURATION = 8.0      # 見失ったあと赤を探す時間（秒）5〜10秒程度
+SEARCH_SPIN_SPEED = 30     # 探索時の首振り旋回スピード
+SEARCH_SWEEP_PERIOD = 1.2  # 首振りの向きを切り替える周期（秒）
+
 FORWARD_SIGN = 1         # 前後が逆（近づくのにバックする）なら -1 にする
 DEBUG = True            # True で各色の生の X/W 値を画面に表示
 
@@ -121,6 +126,16 @@ def stop():
 
 
 # -------------------------------------------------------------
+#  赤を見失ったときの首振り探索（その場で左右に旋回して赤を探す）
+#    direction: +1 / -1 で旋回の向きを切り替えて首を振る
+# -------------------------------------------------------------
+def search_sweep(direction):
+    speed = SEARCH_SPIN_SPEED * direction
+    # 同符号 = その場旋回（drive_speed(v, -v) が前進なので符号を揃えると回転）
+    mbot2.drive_speed(speed, speed)
+
+
+# -------------------------------------------------------------
 #  メインループ
 # -------------------------------------------------------------
 @event.start
@@ -141,6 +156,13 @@ def on_start():
     stop()
     cyberpi.led.off()
 
+    # 探索（首振り）の状態
+    was_following_red = False   # 直前まで赤を追従していたか
+    searching = False           # 現在 赤を首振りで探索中か
+    search_start = 0            # 探索を開始した時刻
+    sweep_dir = 1              # 首振りの向き（+1 / -1）
+    sweep_toggle = 0           # 次に首振りの向きを変える時刻
+
     while True:
         # 各色の生の値を読む
         rx = color_x(RED_INDEX)
@@ -153,14 +175,43 @@ def on_start():
             cyberpi.display.show_label("R x:" + str(rx) + " w:" + str(rw), 12, "top_mid", index=0)
             cyberpi.display.show_label("B x:" + str(bx) + " w:" + str(bw), 12, "middle_mid", index=1)
 
+        now = time.time()
+
         if is_detected(rx, rw):
-            # 赤い物体 -> 近づく
+            # 赤い物体 -> 近づく（探索中だったら解除して再追従）
+            searching = False
+            was_following_red = True
             cyberpi.led.on(255, 0, 0)
             follow_red(rx, rw)
+
+        elif was_following_red:
+            # 赤を追従していたのに見失った -> 首振りで赤を探す
+            if not searching:
+                # 探索開始
+                searching = True
+                search_start = now
+                sweep_dir = 1
+                sweep_toggle = now + SEARCH_SWEEP_PERIOD
+
+            if now - search_start <= SEARCH_DURATION:
+                # 探索中：一定周期で首振りの向きを反転しながらその場旋回
+                cyberpi.led.on(255, 128, 0)   # 探索中はオレンジ
+                if now >= sweep_toggle:
+                    sweep_dir = -sweep_dir
+                    sweep_toggle = now + SEARCH_SWEEP_PERIOD
+                search_sweep(sweep_dir)
+            else:
+                # 時間切れ：探索をあきらめて通常動作（青/停止）へ戻す
+                searching = False
+                was_following_red = False
+                stop()
+                cyberpi.led.off()
+
         elif is_detected(bx, bw):
             # 青い物体 -> 目を背ける
             cyberpi.led.on(0, 0, 255)
             turn_away_from_blue(bx)
+
         else:
             # 何も無い -> 停止
             stop()
