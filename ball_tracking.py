@@ -4,7 +4,7 @@
 #  CyberPi + AI Camera 2.0  色追従プログラム（第一段階：色のみで識別）
 # =============================================================
 #  ・AI Camera 2.0 の「色認識(Blob)」で赤・青の物体を検知
-#  ・赤い物体 -> その物体に近づく（追従し、距離を約10cmに保つ）
+#  ・赤い物体 -> その物体に近づく（十分近づいたら止まる。後退はしない）
 #  ・青い物体 -> その物体から目を背ける（反対方向へ旋回）
 #  ・なし     -> 停止（物体を見つけるまでは停止のまま待機）
 #
@@ -32,15 +32,18 @@ ATTR_WIDTH = 3             # 幅(W)
 FRAME_CENTER_X = 320       # 画面中心X（画面幅640）
 X_TOLERANCE = 10          # 中心とみなす左右の許容差
 
-TARGET_WIDTH = 180         # 約10cmのときのボールの幅(px)。要キャリブレーション
-WIDTH_TOLERANCE = 15      # この範囲内なら「ちょうど良い距離」とみなす
+TARGET_WIDTH = 180         # この幅まで近づいたら止まる(px)。画面のW値を見て調整
+MIN_WIDTH = 20            # これ未満の検出はノイズ/誤検出として無視
 
 KP_TURN = 0.04            # 左右ずれ -> 旋回量への係数
-KP_DRIVE = 0.4           # 距離ずれ -> 前後速度への係数
+KP_DRIVE = 0.4           # 距離ずれ -> 前進速度への係数
 
-MAX_SPEED = 80           # 前後速度の上限
+MAX_SPEED = 80           # 前進速度の上限
 SPIN_SPEED = 30          # 青のとき背を向ける旋回スピード
 LOOP_INTERVAL = 0.05     # 制御周期（秒）
+
+FORWARD_SIGN = 1         # 前後が逆（近づくのにバックする）なら -1 にする
+DEBUG = True            # True で各色の生の X/W 値を画面に表示
 
 
 def clamp(value, low, high):
@@ -62,39 +65,38 @@ def start_color_recognition():
 
 
 # -------------------------------------------------------------
-#  指定した色番号のボールを1つ読み取る
-#    戻り値: (x, w) / 見つからなければ None（属性が負の値=未検出）
+#  指定した色番号の X / 幅(W) を読み取る（生の値）
+#    未検出のとき X は負の値（< 0）を返す
 # -------------------------------------------------------------
-def read_ball(color_index):
-    x = mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_X, 1)
-    if x < 0:
-        return None
-    w = mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_WIDTH, 1)
-    if w < 0:
-        return None
-    return (x, w)
+def color_x(color_index):
+    return mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_X, 1)
+
+
+def color_w(color_index):
+    return mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_WIDTH, 1)
+
+
+def is_detected(x, w):
+    # X が負 = 未検出。幅が小さすぎる検出はノイズ/誤検出として無視
+    return x >= 0 and w >= MIN_WIDTH
 
 
 # -------------------------------------------------------------
-#  赤ボールに追従して距離10cmを保つ
+#  赤い物体に近づく（近づいて、十分近ければ止まる。後退はしない）
 # -------------------------------------------------------------
 def follow_red(x, w):
-    # 左右のずれ（プラス=ボールが右）-> 旋回成分
+    # 左右のずれ（プラス=物体が右）-> 旋回成分
     error_x = x - FRAME_CENTER_X
     if abs(error_x) <= X_TOLERANCE:
         turn = 0
     else:
         turn = KP_TURN * error_x
 
-    # 距離のずれ。w が小さい=遠い=前進、w が大きい=近い=後退
-    width_error = TARGET_WIDTH - w
-    if abs(width_error) <= WIDTH_TOLERANCE:
-        drive = 0
-    else:
-        drive = KP_DRIVE * width_error
+    # 距離: 幅が TARGET_WIDTH より小さい(=遠い)ほど前進。近ければ 0（止まる）
+    drive = KP_DRIVE * (TARGET_WIDTH - w)
+    drive = clamp(drive, 0, MAX_SPEED)     # 0未満にしない = 後退しない
 
-    drive = clamp(drive, -MAX_SPEED, MAX_SPEED)
-
+    drive = drive * FORWARD_SIGN
     # mBot2 の前進は drive_speed(v, -v)（右モーターは符号反転）
     left_speed = clamp(drive + turn, -MAX_SPEED, MAX_SPEED)
     right_speed = clamp(turn - drive, -MAX_SPEED, MAX_SPEED)
@@ -118,11 +120,6 @@ def stop():
     mbot2.drive_speed(0, 0)
 
 
-def show_state(text, r, g, b):
-    cyberpi.led.on(r, g, b)
-    cyberpi.display.show_label(text, 16, "center", index=0)
-
-
 # -------------------------------------------------------------
 #  メインループ
 # -------------------------------------------------------------
@@ -130,24 +127,33 @@ def show_state(text, r, g, b):
 def on_start():
     start_color_recognition()
 
-    # ボールを見つけるまでは停止して待機
+    # 物体を見つけるまでは停止して待機
     stop()
     cyberpi.led.off()
-    cyberpi.display.show_label("NO BALL", 16, "center", index=0)
 
     while True:
-        red = read_ball(RED_INDEX)
-        if red is not None:
-            show_state("RED: FOLLOW", 255, 0, 0)
-            follow_red(red[0], red[1])
+        # 各色の生の値を読む
+        rx = color_x(RED_INDEX)
+        rw = color_w(RED_INDEX)
+        bx = color_x(BLUE_INDEX)
+        bw = color_w(BLUE_INDEX)
+
+        # デバッグ表示（何が検出されているか確認する）
+        if DEBUG:
+            cyberpi.display.show_label("R x:" + str(rx) + " w:" + str(rw), 12, "top_mid", index=0)
+            cyberpi.display.show_label("B x:" + str(bx) + " w:" + str(bw), 12, "middle_mid", index=1)
+
+        if is_detected(rx, rw):
+            # 赤い物体 -> 近づく
+            cyberpi.led.on(255, 0, 0)
+            follow_red(rx, rw)
+        elif is_detected(bx, bw):
+            # 青い物体 -> 目を背ける
+            cyberpi.led.on(0, 0, 255)
+            turn_away_from_blue(bx)
         else:
-            blue = read_ball(BLUE_INDEX)
-            if blue is not None:
-                show_state("BLUE: TURN AWAY", 0, 0, 255)
-                turn_away_from_blue(blue[0])
-            else:
-                stop()
-                cyberpi.led.off()
-                cyberpi.display.show_label("NO BALL", 16, "center", index=0)
+            # 何も無い -> 停止
+            stop()
+            cyberpi.led.off()
 
         time.sleep(LOOP_INTERVAL)
