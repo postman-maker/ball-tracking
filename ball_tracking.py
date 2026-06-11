@@ -3,39 +3,52 @@
 # =============================================================
 #  CyberPi + AI Camera 2.0  ボール追従プログラム
 # =============================================================
-#  ・AI Camera 2.0 の「色認識」で赤・青のボールを検知
+#  ・AI Camera 2.0 の「色認識(Blob)」で赤・青のボールを検知
 #  ・赤  -> ボールに追従し、距離を約10cmに保つ
 #  ・青  -> ボールからそっぽを向く（反対方向へ旋回）
 #  ・なし -> 停止
 #
 #  ＜事前準備（AI Camera 2.0 側）＞
-#   1. 色認識(Blob)モードにする
-#   2. 赤ボールを学習させ、名前を "red" にする
-#   3. 青ボールを学習させ、名前を "blue" にする
-#      ※ 下の RED_NAME / BLUE_NAME と必ず一致させること
+#   色認識モードで色を2つ学習させ、学習した順番を下の番号に合わせる:
+#     ・1色目（色番号1） = 赤ボール   -> RED_INDEX
+#     ・2色目（色番号2） = 青ボール   -> BLUE_INDEX
+#
+#  ＜API メモ（動作確認済みサンプルより）＞
+#   ・色認識モードに切替: ai_camera.ai_camera_set_func_switch(3, 1)
+#   ・現在モード取得      : ai_camera.ai_camera_func_mode_get(1) == 'Color'
+#   ・空間属性取得        : ai_camera.ai_camera_color_spatial_attribute_get(色番号, 属性, 検出番号)
+#         属性: 1=X座標, 3=幅(W)   / 未検出のとき負の値(<0)
+#   ・座標系は画面幅640 -> 中心X = 320
+#   ・mBot2 の前進は drive_speed(v, -v)（右モーターは符号反転）
 # =============================================================
 
-import event, time, cyberpi, mbuild, mbot2
+import event, time, cyberpi, mbuild, math, mbot2
 
 # -------------------------------------------------------------
-#  AI Camera 2.0 で学習させた色の名前（実機の学習名と一致させる）
+#  学習した色の番号（AI Camera で学習させた順番に合わせる）
 # -------------------------------------------------------------
-RED_NAME = "red"
-BLUE_NAME = "blue"
-NOT_FOUND = -99999          # 未検出のとき AI Camera が返す値
+RED_INDEX = 1               # 赤ボール = 1色目
+BLUE_INDEX = 2              # 青ボール = 2色目
+
+# 空間属性のセレクタ（サンプルで確認済み）
+ATTR_X = 1                  # X座標
+ATTR_WIDTH = 3             # 幅(W)
 
 # -------------------------------------------------------------
 #  調整用パラメータ（実機に合わせてキャリブレーション）
 # -------------------------------------------------------------
-FRAME_CENTER_X = 160        # カメラ画面の中心X（実機のXの範囲を見て決める）
-TARGET_WIDTH = 80           # 10cmのときのボールの幅(px)。要キャリブレーション
-WIDTH_TOLERANCE = 10        # この範囲内なら「ちょうど良い距離」とみなす
+CENTER_X = 320              # 画面中心X（画面幅640）
+X_DEADBAND = 10            # 中心とみなす左右の許容差
 
-KP_TURN = 0.25              # 左右ずれ -> 旋回量への係数
-KP_DRIVE = 0.6              # 距離ずれ -> 前後速度への係数
+TARGET_WIDTH = 180         # 約10cmのときのボールの幅(px)。要キャリブレーション
+WIDTH_TOLERANCE = 15      # この範囲内なら「ちょうど良い距離」とみなす
 
-MAX_SPEED = 60             # 速度の上限
-LOOP_INTERVAL = 0.05        # 制御周期（秒）
+DRIVE_DIV = 2.5            # 距離ずれ -> 前後速度の割り算係数（小さいほど機敏）
+TURN_K = 5                 # 左右ずれ -> 旋回量の係数
+TURN_DIV = 120            # 旋回量の割り算係数
+
+MAX_SPEED = 80            # 前後速度の上限
+SPIN_SPEED = 30          # 青のとき背を向ける旋回スピード
 
 
 def clamp(value, low, high):
@@ -47,74 +60,67 @@ def clamp(value, low, high):
 
 
 # -------------------------------------------------------------
-#  カメラ読み取り（★ここだけ実機のブロックに合わせて確認）★
+#  色認識モードの起動（カメラを 'Color' モードにする）
 # -------------------------------------------------------------
-def read_ball(name):
-    """
-    指定した名前(学習ラベル)のボールを1つ読み取る。
-    戻り値: (x, y, w, h)  / 見つからなければ None
+def start_color_recognition():
+    while not mbuild.ai_camera.ai_camera_func_mode_get(1) == 'Color':
+        mbuild.ai_camera.ai_camera_set_func_switch(3, 1)
+        time.sleep(1)
+    cyberpi.audio.play_until('switch')
 
-    --- 実機との対応 -------------------------------------------
-    確認済み: mbuild.ai_camera.get_object_x('名前', 1) が動作する。
-    AI Camera 2.0 は学習ラベル名(物体名でも色名でも)を get_object_*
-    で読む統一APIと想定し、色を "red"/"blue" の名前で学習して使う。
-    （番号 1 = 一番大きい＝一番近い検出 / 未検出は -99999）
 
-    ※ もし get_object_w / _h でエラーになる場合は、その2つだけ
-       実機の「幅/高さを取得」ブロックが生成する関数名に直すこと。
-    ------------------------------------------------------------
-    """
-    x = mbuild.ai_camera.get_object_x(name, 1)
-    if x == NOT_FOUND:
+# -------------------------------------------------------------
+#  指定した色番号のボールを1つ読み取る
+#    戻り値: (x, w) / 見つからなければ None
+# -------------------------------------------------------------
+def read_ball(color_index):
+    x = mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_X, 1)
+    if x < 0:                       # 負の値 = 未検出
         return None
-    y = mbuild.ai_camera.get_object_y(name, 1)
-    w = mbuild.ai_camera.get_object_w(name, 1)
-    h = mbuild.ai_camera.get_object_h(name, 1)
-    return (x, y, w, h)
+    w = mbuild.ai_camera.ai_camera_color_spatial_attribute_get(color_index, ATTR_WIDTH, 1)
+    if w < 0:
+        return None
+    return (x, w)
 
 
 # -------------------------------------------------------------
-#  赤ボールに追従して距離10cmを保つ
+#  赤: 追従して距離10cmを保つ -> (前後速度, 旋回差速) を返す
 # -------------------------------------------------------------
 def follow_red(x, w):
-    # 左右のずれ（プラス=ボールが右）-> 旋回成分
-    turn = KP_TURN * (x - FRAME_CENTER_X)
-
-    # 距離のずれ。w が小さい=遠い=前進、w が大きい=近い=後退
+    # 距離: 幅が小さい(遠い)->前進、大きい(近い)->後退、目標付近->停止
     width_error = TARGET_WIDTH - w
     if abs(width_error) <= WIDTH_TOLERANCE:
-        drive = 0
+        su_du = 0
     else:
-        drive = KP_DRIVE * width_error
+        su_du = width_error / DRIVE_DIV
+    su_du = clamp(su_du, -MAX_SPEED, MAX_SPEED)
 
-    drive = clamp(drive, -MAX_SPEED, MAX_SPEED)
-    turn = clamp(turn, -MAX_SPEED, MAX_SPEED)
-
-    # 差動駆動: 右にボール(turn>0)なら右へ曲がる
-    left_speed = clamp(drive + turn, -MAX_SPEED, MAX_SPEED)
-    right_speed = clamp(drive - turn, -MAX_SPEED, MAX_SPEED)
-    mbot2.drive_speed(left_speed, right_speed)
+    # 左右: ボールを画面中央に合わせる向きへ旋回（ボール側へ向く）
+    ex = x - CENTER_X
+    if ex > X_DEADBAND:
+        cha_su = TURN_K * (math.fabs(ex) / TURN_DIV)     # 右にボール -> 右へ
+        cyberpi.led.show('black black black yellow yellow')
+    elif ex < -X_DEADBAND:
+        cha_su = -TURN_K * (math.fabs(ex) / TURN_DIV)    # 左にボール -> 左へ
+        cyberpi.led.show('yellow yellow black black black')
+    else:
+        cha_su = 0
+        cyberpi.led.show('green green green green green')  # 正面・距離OK
+    return (su_du, cha_su)
 
 
 # -------------------------------------------------------------
-#  青ボールからそっぽを向く
+#  青: そっぽを向く -> (前後速度, 旋回差速) を返す
 # -------------------------------------------------------------
 def turn_away_from_blue(x):
-    if x >= FRAME_CENTER_X:
-        # ボールが右 -> 左へ回って背を向ける
-        mbot2.drive_speed(-MAX_SPEED, MAX_SPEED)
-    else:
-        # ボールが左 -> 右へ回って背を向ける
-        mbot2.drive_speed(MAX_SPEED, -MAX_SPEED)
-
-
-def stop():
-    mbot2.drive_speed(0, 0)
-
-
-def show_state(text, r, g, b):
-    cyberpi.led.on(r, g, b)
-    cyberpi.display.show_label(text, 16, "center", index=0)
+    cyberpi.led.show('blue blue blue blue blue')
+    ex = x - CENTER_X
+    # 追従とは逆向きに旋回して背を向ける
+    if ex >= 0:                    # ボールが右 -> 左へ回って背を向ける
+        cha_su = -SPIN_SPEED
+    else:                          # ボールが左 -> 右へ回って背を向ける
+        cha_su = SPIN_SPEED
+    return (0, cha_su)
 
 
 # -------------------------------------------------------------
@@ -122,22 +128,19 @@ def show_state(text, r, g, b):
 # -------------------------------------------------------------
 @event.start
 def on_start():
-    while True:
-        red = read_ball(RED_NAME)
-        if red is not None:
-            # 赤を優先して追従
-            x, y, w, h = red
-            show_state("RED: FOLLOW", 255, 0, 0)
-            follow_red(x, w)
-        else:
-            blue = read_ball(BLUE_NAME)
-            if blue is not None:
-                x, y, w, h = blue
-                show_state("BLUE: TURN AWAY", 0, 0, 255)
-                turn_away_from_blue(x)
-            else:
-                stop()
-                cyberpi.led.off()
-                cyberpi.display.show_label("NO BALL", 16, "center", index=0)
+    start_color_recognition()
 
-        time.sleep(LOOP_INTERVAL)
+    while True:
+        red = read_ball(RED_INDEX)
+        if red is not None:
+            su_du, cha_su = follow_red(red[0], red[1])
+        else:
+            blue = read_ball(BLUE_INDEX)
+            if blue is not None:
+                su_du, cha_su = turn_away_from_blue(blue[0])
+            else:
+                su_du, cha_su = 0, 0
+                cyberpi.led.off()
+
+        # mBot2 へ速度指令（前進は drive_speed(v, -v) の符号）
+        mbot2.drive_speed((su_du + cha_su), (0 - (su_du - cha_su)))
